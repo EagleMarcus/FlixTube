@@ -5,7 +5,7 @@
 # For real use you might want to restrict this to the "prod" branch.
 #
 
-name: Deploy metadata
+name: Deploy Azure-Storage
 
 on:
   #
@@ -15,7 +15,7 @@ on:
     branches:
       - main
     paths:
-      - metadata/**
+      - azure-storage/**
 
   #
   # Allows deployment to be invoked manually through the GitHub Actions user interface.
@@ -34,8 +34,8 @@ jobs:
       CONTAINER_REGISTRY: ${{ secrets.CONTAINER_REGISTRY }}
       REGISTRY_UN: ${{ secrets.REGISTRY_UN }}
       REGISTRY_PW: ${{ secrets.REGISTRY_PW  }}
-      NAME: metadata
-      DIRECTORY: metadata
+      NAME: azure-storage
+      DIRECTORY: azure-storage
 
     steps:
       
@@ -69,19 +69,6 @@ jobs:
           chmod +x ./scripts/cd/build-image.sh
           chmod +x ./scripts/cd/push-image.sh
           chmod +x ./scripts/cd/deploy.sh
-      
-      # Set AKS context
-      - name: Set AKS context
-        id: set-context
-        uses: azure/aks-set-context@v3
-        with:
-          resource-group: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }} 
-          cluster-name: ${{ secrets.AZURE_APP_NAME }} 
-      
-      # Setup kubectl
-      - name: Setup kubectl
-        id: install-kubectl
-        uses: azure/setup-kubectl@v3
 
       #
       # Builds the Docker image.
@@ -113,21 +100,4 @@ jobs:
       - name: Deploy
         run: ./scripts/cd/deploy.sh
 
-      - name: Wait for deployment to be ready
-        run: |
-          echo "Sleeping for 1 minute..."
-          sleep 60
-          for i in {1..30}; do
-            if kubectl get pods --field-selector=status.phase=Running | grep -q "$DIRECTORY"; then
-              echo "$DIRECTORY deployment is ready."
-              break
-            fi
-            echo "Waiting... ($i)"
-            sleep 10
-          done
-          if ! kubectl get pods --field-selector=status.phase=Running | grep -q "$DIRECTORY"; then
-            echo "Error: $DIRECTORY deployment did not become ready in time."
-            exit 1
-          fi
-      - name: External IP Address
-        run: kubectl get services
+      

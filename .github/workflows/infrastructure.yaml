@@ -1,10 +1,8 @@
 # 
 # GitHub Actions workflow.
 #
-# Deploys RabbitMQ and MongoDB database.
-#
 
-name: Deploy infrastructure
+name: Form the Infrastructure
 
 on:
   #
@@ -16,21 +14,104 @@ jobs:
 
   deploy:
     runs-on: ubuntu-latest
-    
+
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_APP_NAME: ${{ secrets.AZURE_APP_NAME }}  # Use this as the registry username
+      AZURE_RESOURCE_GROUP_NAME: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
+      VERSION: ${{ github.sha }}
+      REGISTRY_UN: ${{ secrets.AZURE_APP_NAME }}
+      STORAGE_ACCOUNT_NAME: ${{ secrets.STORAGE_ACCOUNT_NAME }}
+      STORAGE_ACCESS_KEY: ${{ secrets.STORAGE_ACCESS_KEY }}
+
     steps:
       
       # Checks-out your repository under $GITHUB_WORKSPACE.
       - uses: actions/checkout@v3
+
+      # login to Azure services
+      - name: Azure login
+        run: az login --service-principal -u ${{ secrets.AZURE_CLIENT_ID }} -p ${{ secrets.AZURE_CREDENTIALS }} --tenant ${{ secrets.AZURE_TENANT_ID }}
+
+      # Install the latest version of Terraform CLI and configure the Terraform CLI configuration file with a Terraform Cloud user API token
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+       # Initialize a new or existing Terraform working directory by creating initial files, loading any remote state, downloading modules, etc.
+      - name: Terraform Init
+        run: terraform init
+        working-directory: ./scripts/cd/terraform/  # Adjusted path to the Terraform folder
+
+      # Terraform Plan
+      - name: Terraform Plan
+        run: terraform plan
+        working-directory: ./scripts/cd/terraform/  # Adjusted path to the Terraform folder
+
+      # Terraform Apply
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
+        working-directory: ./scripts/cd/terraform/  # Adjusted path to the Terraform folder
+
+      
+      # Login to Azure services
+      - name: Azure login
+        run: az login --service-principal -t ${{ secrets.AZURE_TENANT_ID }} -u ${{ secrets.AZURE_CLIENT_ID }} -p ${{ secrets.AZURE_CREDENTIALS }}
+
+      # Get container registry URL --output
+      - name: Azure CLI container registry URL
+        id: CONTAINER_REGISTRY
+        run: |
+          h=$(az acr list -g $AZURE_RESOURCE_GROUP_NAME --query "[].{acrLoginServer:loginServer}[0].acrLoginServer" --output tsv) 
+          echo "CONTAINER_REGISTRY=$h" >> $GITHUB_ENV
+
+      # Get container registry password --output
+      - name: Azure CLI container registry password
+        id: REGISTRY_PW
+        run: |
+          h=$(az acr credential show -n ${{ env.CONTAINER_REGISTRY }} --query 'passwords[0].value' --output tsv) 
+          echo "REGISTRY_PW=$h" >> $GITHUB_ENV
+
+      # # Get the storage account name
+      # - name: Set STORAGE_ACCOUNT_NAME
+      #   run: echo "STORAGE_ACCOUNT_NAME=${{ secrets.AZURE_APP_NAME }}-storage" >> $GITHUB_ENV
+
+      # Get storage account access key
+      - name: Get storage account access key
+        id: STORAGE_ACCESS_KEY
+        run: |
+          key=$(az storage account keys list --account-name ${{ secrets.STORAGE_ACCOUNT_NAME }} --query '[0].value' --output tsv)
+          echo "STORAGE_ACCESS_KEY=$key" >> $GITHUB_ENV
+
+      # Set AKS context
+      - name: Set AKS context
+        id: set-context
+        uses: azure/aks-set-context@v3
+        with:
+          resource-group: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }} 
+          cluster-name: ${{ secrets.AZURE_APP_NAME }} 
+      
+      # Setup kubectl
+      - name: Setup kubectl
+        id: install-kubectl
+        uses: azure/setup-kubectl@v3
+
+      # 
+      # Deploys MongoDB.
+      #
+      - name: Deploy MongoDB
+        run: kubectl apply -f ./scripts/cd/mongodb.yaml
 
       #
       # Installs Kubectl and connects it to the cluster.
       #
       # https://github.com/marketplace/actions/kubernetes-cli-kubectl
       #
-      - uses: tale/kubectl-action@v1
-        with:
-          base64-kube-config: ${{ secrets.KUBE_CONFIG }}
-          kubectl-version: v1.24.2
+      # - uses: tale/kubectl-action@v1
+      #   with:
+      #     base64-kube-config: ${{ secrets.KUBE_CONFIG }}
+      #     kubectl-version: v1.24.2
 
       # 
       # Deploys MongoDB.

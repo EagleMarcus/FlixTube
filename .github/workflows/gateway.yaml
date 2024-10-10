@@ -8,62 +8,76 @@
 name: Deploy gateway
 
 on:
-  #
-  # Deploy the microservice on push to any branch of this code repository.
-  #
-  push: 
+  push:
     branches:
       - main
     paths:
       - gateway/**
-
-  #
-  # Allows deployment to be invoked manually through the GitHub Actions user interface.
-  #
-  workflow_dispatch: 
+  workflow_dispatch:
 
 jobs:
-
   deploy:
     runs-on: ubuntu-latest
-    
     env:
+      STORAGE_ACCOUNT_NAME: ${{ secrets.STORAGE_ACCOUNT_NAME }}
+      STORAGE_ACCESS_KEY: ${{ secrets.STORAGE_ACCESS_KEY }}
+      AZURE_APP_NAME: ${{ secrets.AZURE_APP_NAME }}
+      AZURE_RESOURCE_GROUP_NAME: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
       VERSION: ${{ github.sha }}
-      CONTAINER_REGISTRY: ${{ secrets.CONTAINER_REGISTRY }}
-      REGISTRY_UN: ${{ secrets.REGISTRY_UN }}
-      REGISTRY_PW: ${{ secrets.REGISTRY_PW  }}
+      REGISTRY_UN: ${{ secrets.AZURE_APP_NAME }}
+      REGISTRY_PW: ${{ secrets.REGISTRY_PW }}
       NAME: gateway
       DIRECTORY: gateway
 
     steps:
-      
-      # Checks-out your repository under $GITHUB_WORKSPACE.
       - uses: actions/checkout@v3
+      - name: Azure login
+        run: az login --service-principal -u ${{ secrets.AZURE_CLIENT_ID }} -p ${{ secrets.AZURE_CREDENTIALS }} --tenant ${{ secrets.AZURE_TENANT_ID }}
+      - name: Get Container Registry URL
+        id: get_registry
+        run: |
+          h=$(az acr list -g $AZURE_RESOURCE_GROUP_NAME --query "[].{acrLoginServer:loginServer}[0].acrLoginServer" --output tsv)
+          echo "CONTAINER_REGISTRY=$h" >> $GITHUB_ENV
 
-      #
-      # Builds the Docker image.
-      #
+      - name: Login to ACR
+        run: az acr login --name ${{ secrets.AZURE_APP_NAME }}
+
+      - name: Set AKS context
+        uses: azure/aks-set-context@v3
+        with:
+          resource-group: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
+          cluster-name: ${{ secrets.AZURE_APP_NAME }}
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+      - name: Set executable permissions
+        run: |
+          chmod +x ./scripts/cd/build-image.sh
+          chmod +x ./scripts/cd/push-image.sh
+          chmod +x ./scripts/cd/deploy.sh
       - name: Build
         run: ./scripts/cd/build-image.sh
-
-      #
-      # Publishes the Docker image to the container registry.
-      #
       - name: Publish
         run: ./scripts/cd/push-image.sh
 
-      #
-      # Installs Kubectl and connects it to the cluster.
-      #
-      # https://github.com/marketplace/actions/kubernetes-cli-kubectl
-      #
-      - uses: tale/kubectl-action@v1
-        with:
-          base64-kube-config: ${{ secrets.KUBE_CONFIG }}
-          kubectl-version: v1.24.2
       
-      #
-      # Expands the configuration template and deploys the microservice.
-      #
+
       - name: Deploy
         run: ./scripts/cd/deploy.sh
+      - name: Wait for deployment to be ready
+        run: |
+          echo "Sleeping for 1 minute..."
+          sleep 60
+          for i in {1..30}; do
+            if kubectl get pods --field-selector=status.phase=Running | grep -q "$DIRECTORY"; then
+              echo "$DIRECTORY deployment is ready."
+              break
+            fi
+            echo "Waiting... ($i)"
+            sleep 10
+          done
+          if ! kubectl get pods --field-selector=status.phase=Running | grep -q "$DIRECTORY"; then
+            echo "Error: $DIRECTORY deployment did not become ready in time."
+            exit 1
+          fi
+      - name: External IP Address
+        run: kubectl get services

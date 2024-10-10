@@ -28,6 +28,8 @@ jobs:
     runs-on: ubuntu-latest
     
     env:
+      STORAGE_ACCOUNT_NAME: ${{ secrets.STORAGE_ACCOUNT_NAME }}
+      STORAGE_ACCESS_KEY: ${{ secrets.STORAGE_ACCESS_KEY }}
       VERSION: ${{ github.sha }}
       CONTAINER_REGISTRY: ${{ secrets.CONTAINER_REGISTRY }}
       REGISTRY_UN: ${{ secrets.REGISTRY_UN }}
@@ -39,6 +41,47 @@ jobs:
       
       # Checks-out your repository under $GITHUB_WORKSPACE.
       - uses: actions/checkout@v3
+
+      - name: Azure login
+        run: az login --service-principal -u ${{ secrets.AZURE_CLIENT_ID }} -p ${{ secrets.AZURE_CREDENTIALS }} --tenant ${{ secrets.AZURE_TENANT_ID }}
+      
+      - name: Debug Resource Group Name
+        run: echo "Resource Group Name ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}"
+
+      - name: Get Container Registry URL
+        id: get_registry
+        run: |
+          h=$(az acr list -g ${{ secrets.AZURE_RESOURCE_GROUP_NAME }} --query "[].{acrLoginServer:loginServer}[0].acrLoginServer" --output tsv)
+          echo "CONTAINER_REGISTRY=$h" >> $GITHUB_ENV
+
+      - name: Login to ACR
+        run: az acr login --name ${{ secrets.AZURE_APP_NAME }}
+
+      - name: Set AKS context
+        uses: azure/aks-set-context@v3
+        with:
+          resource-group: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
+          cluster-name: ${{ secrets.AZURE_APP_NAME }}
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+      - name: Set executable permissions
+        run: |
+          chmod +x ./scripts/cd/build-image.sh
+          chmod +x ./scripts/cd/push-image.sh
+          chmod +x ./scripts/cd/deploy.sh
+
+       # Set AKS context
+      - name: Set AKS context
+        id: set-context
+        uses: azure/aks-set-context@v3
+        with:
+          resource-group: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }} 
+          cluster-name: ${{ secrets.AZURE_APP_NAME }} 
+      
+      # Setup kubectl
+      - name: Setup kubectl
+        id: install-kubectl
+        uses: azure/setup-kubectl@v3
 
       #
       # Builds the Docker image.
@@ -57,13 +100,34 @@ jobs:
       #
       # https://github.com/marketplace/actions/kubernetes-cli-kubectl
       #
-      - uses: tale/kubectl-action@v1
-        with:
-          base64-kube-config: ${{ secrets.KUBE_CONFIG }}
-          kubectl-version: v1.24.2
+      # - uses: tale/kubectl-action@v1
+      #   with:
+      #     base64-kube-config: ${{ secrets.KUBE_CONFIG }}
+      #     kubectl-version: v1.24.2
+
+    
       
       #
       # Expands the configuration template and deploys the microservice.
       #
       - name: Deploy
         run: ./scripts/cd/deploy.sh
+
+      - name: Wait for deployment to be ready
+        run: |
+          echo "Sleeping for 1 minute..."
+          sleep 60
+          for i in {1..30}; do
+            if kubectl get pods --field-selector=status.phase=Running | grep -q "$DIRECTORY"; then
+              echo "$DIRECTORY deployment is ready."
+              break
+            fi
+            echo "Waiting... ($i)"
+            sleep 10
+          done
+          if ! kubectl get pods --field-selector=status.phase=Running | grep -q "$DIRECTORY"; then
+            echo "Error: $DIRECTORY deployment did not become ready in time."
+            exit 1
+          fi
+      - name: External IP Address
+        run: kubectl get services
