@@ -20,11 +20,15 @@ spec:
     spec:
       containers: 
       - name: video-storage
-        image: $CONTAINER_REGISTRY/mock-storage:$VERSION
+        image: $CONTAINER_REGISTRY/azure-storage:$VERSION
         imagePullPolicy: IfNotPresent
         env:
         - name: PORT
           value: "4000"
+        - name: STORAGE_ACCOUNT_NAME
+          value: ${STORAGE_ACCOUNT_NAME}
+        - name: STORAGE_ACCESS_KEY
+          value: ${STORAGE_ACCESS_KEY}
 ---
 apiVersion: v1
 kind: Service

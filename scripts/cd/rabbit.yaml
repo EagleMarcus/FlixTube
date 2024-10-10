@@ -27,7 +27,10 @@ spec:
           value: test
         - name: RABBITMQ_DEFAULT_PASS
           value: test
-
+        - name: STORAGE_ACCOUNT_NAME
+          value: ${STORAGE_ACCOUNT_NAME}
+        - name: STORAGE_ACCESS_KEY
+          value: ${STORAGE_ACCESS_KEY}
 ---
 apiVersion: v1
 kind: Service
